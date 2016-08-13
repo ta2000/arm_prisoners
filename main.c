@@ -73,7 +73,7 @@ void editFile(char* buffer)
     char* currentPrisoner = strstr(buffer, "Type                 Prisoner  ");
     char* nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
 
-    while (nextPrisoner != NULL)
+    while (currentPrisoner != NULL)
     {
         // Go back 2 lines to get Id.i and Id.u
         char* i; int lines = 0;
@@ -101,8 +101,13 @@ void editFile(char* buffer)
 
         printf("Id.i: %d\nId.u: %d\n\n", IDs[index][0], IDs[index][1]);
 
+        // Make the next prisoner current
         currentPrisoner = nextPrisoner;
-        nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
+        // If this is not the last prisoner, look for the next one
+        if (currentPrisoner != NULL)
+        {
+            nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
+        }
 
         // Increment index for next prisoner
         index++;
