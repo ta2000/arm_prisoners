@@ -1,19 +1,40 @@
 #include <stdio.h>
 #include <stdlib.h> // calloc
+#include <stdbool.h>
+#include <unistd.h>
 #include <string.h> // strstr
 #include <ctype.h> // isdigit
 #include <math.h> // numDigits()
 
-size_t getFileSize(char* path);
-void editFile(char* buffer, size_t bufferSize, char* path);
-int numDigits(int number);
+#define STR_OBJECTS_HEADER "BEGIN Objects"
 
-int main(int argc, char* argv[])
+#define VERSION 1.0
+
+#define ERR_NONE 0
+#define ERR_NO_FILE_PATH 1
+#define ERR_FILE_NOT_FOUND 2
+#define ERR_FILE_EMPTY 3
+#define ERR_READING_FILE 4
+#define ERR_NO_OBJECTS 5
+#define ERR_OTHER 99
+
+size_t getFileSize(char* path);
+//void editFile(char* buffer, size_t bufferSize, char* path);
+int numDigits(int number);
+void logError(FILE *fp, int errNum);
+bool isAlphaNumeric(char c);
+int getNextPrisoner(char *buffer, long **arr_IDi, long **arr_IDu);
+
+char* logFileName = "log.txt";
+
+int main(int argc, char *argv[])
 {
+    FILE *log_fp = fopen(logFileName, "w+");
+
     // Check arguments
-    if (argc != 2)
+    if (argc < 2)
     {
-        fprintf(stderr, "No file path provided, or too many arguments.\n");
+        logError(log_fp, ERR_NO_FILE_PATH);
         return 1;
     }
 
@@ -21,7 +42,7 @@ int main(int argc, char* argv[])
     size_t size = getFileSize(argv[1]);
     if (size == 0)
     {
-        fprintf(stderr, "File size is 0 bytes.\n");
+        logError(log_fp, ERR_FILE_NOT_FOUND);
         return 1;
     }
 
@@ -36,31 +57,57 @@ int main(int argc, char* argv[])
     // Make sure reading completed
     if (bytesRead < size)
     {
-        fprintf(stderr, "Did not finish reading file.\n");
         return 1;
     }
 
-    editFile(buffer, size, argv[1]);
+    long *arr_IDi = malloc(600 * sizeof(long));
+    long *arr_IDu = malloc(600 * sizeof(long));
+    getNextPrisoner(buffer, &arr_IDi, &arr_IDu);
+    //editFile(buffer, size, argv[1]);
+
     free(buffer);
+
+    fclose(log_fp);
 
     return 0;
 }
 
-int numDigits(int number)
-{
+void logError(FILE *fp, int errNum) {
+    switch(errNum) {
+        case ERR_NO_FILE_PATH:
+            fprintf(fp, "No file path provided.\n");
+            break;
+        case ERR_FILE_NOT_FOUND:
+            fprintf(fp, "File not found or file was empty.\n");
+            break;
+        case ERR_FILE_EMPTY:
+            fprintf(fp, "File not found or file was empty.\n");
+            break;
+        case ERR_READING_FILE:
+            fprintf(fp, "Could not finish reading file.\n");
+            break;
+        case ERR_NO_OBJECTS:
+            fprintf(fp, "Program was unable to find Objects header in the file. Make sure this is a prison architect save file. If the problem persists, there may have been a change to the save file format and this program is out of data.\n");
+            break;
+        default:
+            fprintf(fp, "Error occurred\n");
+            break;
+    }
+}
+
+int numDigits(int number) {
     if (number == 0)
         return 1;
     else
         return floor(log10(abs(number)))+1;
 }
 
-size_t getFileSize(char* path)
-{
+size_t getFileSize(char *path) {
     FILE *fp = fopen(path, "r");
     if (fp == NULL)
     {
         fprintf(stderr, "File not found: %s\n", path);
-        return 1;
+        return 0;
     }
 
     // Get file size
@@ -73,69 +120,14 @@ size_t getFileSize(char* path)
     return size;
 }
 
-void editFile(char* buffer, size_t bufferSize,char* path)
-{
-    // ====================== //
-    // GET PRISONER ID.I/ID.U //
-    // ====================== //
-
-
-    // 2D array containing Id.i and Id.u of each prisoner
-    int index = 0;
-    long IDs[1000][2] = {0}; // Max 1000 prisoners
-
-    // Find first prisoner in file
-    char* currentPrisoner = strstr(buffer, "Type                 Prisoner  ");
-    char* nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
-
-    while (currentPrisoner != NULL)
-    {
-        // Go back 2 lines to get Id.i and Id.u
-        char* i; int lines = 0;
-        for (i=(currentPrisoner-1); lines < 3; i--)
-        {
-            if (*i == '\n')
-                lines++;
-        }
-
-        // For strtol
-        char* endptr;
-
-        // Move forward until the Id.i number is found
-        for (i; !isdigit(*i); i++);
-        // Convert Id.i string to long and add to array
-        IDs[index][0] = strtol(i, &endptr, 10);
-
-        // Move to end of number
-        i = endptr;
-
-        // Move forward to next line until Id.u is found
-        for (i; !isdigit(*i); i++);
-        // Convert Id.i string to long and add to array
-        IDs[index][1] = strtol(i, &endptr, 10);
-
-        // Print IDs of prisoner
-        //printf("Id.i: %d\nId.u: %d\n\n", IDs[index][0], IDs[index][1]);
-
-        // Make the next prisoner current
-        currentPrisoner = nextPrisoner;
-        // If this is not the last prisoner, look for the next one
-        if (currentPrisoner != NULL)
-        {
-            nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
-        }
-
-        // Increment index for next prisoner
-        index++;
-    }
-
-
+/*
+void editFile(char *buffer, size_t bufferSize, char *path) {
     // ======================== //
     // REMOVE EXISTING TRACKERS //
     // ======================== //
 
     // Find Trackers section
-    char* i = strstr(buffer, "BEGIN Trackers");
+    char *i = strstr(buffer, "BEGIN Trackers");
     // Skip past size line
     int lines = 0;
     for (i; lines < 2; i++)
@@ -143,7 +135,7 @@ void editFile(char* buffer, size_t bufferSize,char* path)
         if (*i == '\n')
             lines++;
     }
-    char* trackerStart = i;
+    char *trackerStart = i;
 
     // Navigate to the section after Trackers
     i = strstr(trackerStart, "BEGIN HistoricalTrackers");
@@ -182,11 +174,11 @@ void editFile(char* buffer, size_t bufferSize,char* path)
     printf("New chars to be added: %lu\n", newChars);
 
     // Create a new buffer, large enough to include new Trackers
-    char* newBuffer = calloc(bufferSize + newChars, 1);
+    char *newBuffer = calloc(bufferSize + newChars, 1);
     // Copy information from old buffer to new buffer
     memcpy(newBuffer, buffer, bufferSize);
 
-    char* iNew = strstr(newBuffer, "BEGIN HistoricalTrackers");
+    char *iNew = strstr(newBuffer, "BEGIN HistoricalTrackers");
 
     // Make space for new trackers to be written
     memmove(iNew+newChars, iNew, newChars);
@@ -264,4 +256,148 @@ void editFile(char* buffer, size_t bufferSize,char* path)
     fclose(fp);
 
     free(newBuffer);
+}
+*/
+
+bool isAlphaNumeric(char c) {
+    return ((c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122));
+}
+
+// Returns the addr of the next grouping of characters for parsing
+// Marks the first non-whitespace, then counts characters until next whitespace
+char *getNextToken(char *buffer, int direction, int *tokenLength) {
+    char *tokenStart;
+    char *walker = buffer;
+    bool reachedTokenStart = false;
+
+    // Direction must be -1 or 1
+    if (direction * direction != 1) {
+        printf("Direction in getNextToken not -1 or 1\n");
+        return NULL;
+    }
+
+    for (int i = 0; i < 200; i++)
+        printf("%c", walker[1-i]);
+    printf("\n\n");
+
+    printf("Address of walker: %p\n", walker);
+
+    // Find where next token starts
+    // If searching in reverse, start 1 before
+    int i = (direction == -1) ? -1 : 0;
+    for(i; !reachedTokenStart; i += direction) {
+        printf("%d: %c (%d)\n", i, walker[i], (int)walker[i]);
+        sleep(1);
+        if (walker[i] > 32 && walker[i] < 127) {
+            printf("The starting letter of the token is %c\n", walker[i]);
+            tokenStart = &walker[i];
+            reachedTokenStart = true;
+        }
+    }
+    walker = &buffer[i * direction - 1];
+
+    // Find length of token
+    for (i = 0; (walker[i] > 32 && walker[i] < 127); i += direction);
+    *tokenLength = abs(i);
+
+    // Move the start to the actual start of the word when direction is -1
+    if (direction == -1) {
+        tokenStart -= ((*tokenLength) - 1);
+    }
+
+    printf("Length of word: %d\n", *tokenLength);
+
+    return tokenStart;
+}
+
+int getNextPrisoner(char *buffer, long **arr_IDi, long **arr_IDu) {
+    int index = 0;
+    //long IDs[1000][2] = {0}; // Max 1000 prisoners
+
+    // The part of the save file where objects and people are stored
+    char *objects_addr = strstr(buffer, STR_OBJECTS_HEADER);
+    if (!objects_addr) {
+        return ERR_NO_OBJECTS;
+    }
+
+    for (int i = 0; i < 200; i++)
+        printf("%c", objects_addr[i]);
+    printf("\n\n");
+
+    /*char *currentPrisoner = NULL;
+    bool foundPrisoner = false;
+    while (!foundPrisoner) {
+        // Look for type prisoner on this line
+        strstr(objects_addr, "Type");
+        for (int i = 0; objects_addr[i] != '\n'; i++) {
+            if (strncmp("Prisoner", objects_addr + i, sizeof("Prisoner") - 1)) {
+                foundPrisoner = true;
+                break;
+            }
+        }
+    }*/
+
+    int tokenLength = 0;
+    char *tokenStart = getNextToken(objects_addr, -1, &tokenLength);
+    for (int i = 0; i < tokenLength; i++)
+        printf("%c", tokenStart[i]);
+    printf("\n");
+
+    return 0;
+
+    // Find first prisoner in file
+    //char *currentPrisoner = strstr(objects_addr, "Type                 Prisoner  ");
+    //char *nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
+
+    /*
+    while (currentPrisoner != NULL)
+    {
+        // Go back 2 lines to get Id.i and Id.u
+        char *i; int lines = 0;
+        for (i=(currentPrisoner-1); lines < 3; i--)
+        {
+            if (*i == '\n')
+                lines++;
+        }
+
+        // For strtol
+        char *endptr;
+
+        // Move forward until the Id.i number is found
+        for (i; !isdigit(*i); i++);
+        // Convert Id.i string to long and add to array
+        IDs[index][0] = strtol(i, &endptr, 10);
+
+        // Move to end of number
+        i = endptr;
+
+        // Move forward to next line until Id.u is found
+        for (i; !isdigit(*i); i++);
+        // Convert Id.i string to long and add to array
+        IDs[index][1] = strtol(i, &endptr, 10);
+
+        // Print IDs of prisoner
+        //printf("Id.i: %d\nId.u: %d\n\n", IDs[index][0], IDs[index][1]);
+
+        // Make the next prisoner current
+        currentPrisoner = nextPrisoner;
+        // If this is not the last prisoner, look for the next one
+        if (currentPrisoner != NULL)
+        {
+            nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
+        }
+
+        // Increment index for next prisoner
+        index++;
+    }
+*/
+
+}
+
+void removeTrackers() {
+}
+
+void addTracker() {
 }
