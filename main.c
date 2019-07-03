@@ -278,28 +278,20 @@ char *getNextToken(char *buffer, int direction, int *tokenLength) {
         return NULL;
     }
 
-    for (int i = 0; i < 200; i++)
-        printf("%c", walker[1-i]);
-    printf("\n\n");
-
-    printf("Address of walker: %p\n", walker);
-
     // Find where next token starts
     // If searching in reverse, start 1 before
     int i = (direction == -1) ? -1 : 0;
     for(i; !reachedTokenStart; i += direction) {
-        printf("%d: %c (%d)\n", i, walker[i], (int)walker[i]);
-        sleep(1);
         if (walker[i] > 32 && walker[i] < 127) {
-            printf("The starting letter of the token is %c\n", walker[i]);
             tokenStart = &walker[i];
             reachedTokenStart = true;
+            walker = &walker[i];
         }
     }
-    walker = &buffer[i * direction - 1];
 
     // Find length of token
     for (i = 0; (walker[i] > 32 && walker[i] < 127); i += direction);
+    printf("\n");
     *tokenLength = abs(i);
 
     // Move the start to the actual start of the word when direction is -1
@@ -340,10 +332,15 @@ int getNextPrisoner(char *buffer, long **arr_IDi, long **arr_IDu) {
     }*/
 
     int tokenLength = 0;
-    char *tokenStart = getNextToken(objects_addr, -1, &tokenLength);
-    for (int i = 0; i < tokenLength; i++)
-        printf("%c", tokenStart[i]);
-    printf("\n");
+    //char *tokenStart = getNextToken(objects_addr, 1, &tokenLength);
+    char *tokenStart = objects_addr;
+    for (int i = 0; i < 10; i++) {
+        tokenStart = getNextToken(tokenStart, -1, &tokenLength);
+        for (int j = 0; j < tokenLength; j++)
+            printf("%c", tokenStart[j]);
+        printf("\n");
+        //sleep(1);
+    }
 
     return 0;
 
