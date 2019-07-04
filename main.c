@@ -7,6 +7,7 @@
 #include <math.h> // numDigits()
 
 #define STR_OBJECTS_HEADER "BEGIN Objects"
+#define STR_TRACKERS_HEADER "BEGIN Trackers"
 
 #define VERSION 1.0
 
@@ -15,15 +16,38 @@
 #define ERR_FILE_NOT_FOUND 2
 #define ERR_FILE_EMPTY 3
 #define ERR_READING_FILE 4
-#define ERR_NO_OBJECTS 5
+#define ERR_NO_OBJECTS_HEADING 5
+#define ERR_NO_TRACKERS_HEADING 6
+#define ERR_OUT_OF_PRISONERS 7
+#define ERR_NO_ID 8
 #define ERR_OTHER 99
 
 size_t getFileSize(char* path);
 //void editFile(char* buffer, size_t bufferSize, char* path);
 int numDigits(int number);
 void logError(FILE *fp, int errNum);
-bool isAlphaNumeric(char c);
-int getNextPrisoner(char *buffer, long **arr_IDi, long **arr_IDu);
+int getPrisonerIDs(
+    char *buffer,
+    char *bufferEnd,
+    long *arr_IDi,
+    long *arr_IDu,
+    int *err
+);
+char *getNextToken(
+    char *buffer,
+    char *bufferEnd,
+    int direction,
+    int *tokenLength
+);
+char *getNextPrisoner(
+    char *buffer,
+    char *bufferEnd,
+    int prisonerIndex,
+    long *arr_IDi,
+    long *arr_IDu,
+    int *err
+);
+void removeTrackers(char *buffer, char *bufferEnd, int *err);
 
 char* logFileName = "log.txt";
 
@@ -47,7 +71,8 @@ int main(int argc, char *argv[])
     }
 
     // Buffer to store file contents
-    char* buffer = calloc(size, 1);
+    char *buffer = calloc(size, 1);
+    char *bufferEnd = buffer + size;
 
     // Reopen file to read into buffer
     FILE *fp = fopen(argv[1], "r");
@@ -57,13 +82,34 @@ int main(int argc, char *argv[])
     // Make sure reading completed
     if (bytesRead < size)
     {
+        logError(log_fp, 4);
+        free(buffer);
         return 1;
     }
 
+
+    int err = 0;
+
+    // IDs
     long *arr_IDi = malloc(600 * sizeof(long));
     long *arr_IDu = malloc(600 * sizeof(long));
-    getNextPrisoner(buffer, &arr_IDi, &arr_IDu);
-    //editFile(buffer, size, argv[1]);
+    fprintf(log_fp, "Acquiring prisoner IDs...\n");
+    int numPrisoners = getPrisonerIDs(
+            buffer, bufferEnd, arr_IDi, arr_IDu, &err);
+    logError(log_fp, err);
+    if (err != ERR_OUT_OF_PRISONERS) {
+        free(buffer);
+        return 1;
+    }
+    fprintf(log_fp, "Finished collecting %d prisoner IDs.\n", numPrisoners - 1);
+
+    /*for (int i = 0; i < numPrisoners; i++) {
+        printf("Prisoner %d: Id.i %ld, Id.u %ld\n", i, arr_IDi[i], arr_IDu[i]);
+    }*/
+
+    // Trackers
+    fprintf(log_fp, "Removing existing trackers...\n");
+    removeTrackers(buffer, bufferEnd, &err);
 
     free(buffer);
 
@@ -74,23 +120,34 @@ int main(int argc, char *argv[])
 
 void logError(FILE *fp, int errNum) {
     switch(errNum) {
+        case ERR_NONE:
+            break;
         case ERR_NO_FILE_PATH:
-            fprintf(fp, "No file path provided.\n");
+            fprintf(fp, "ERROR: No file path provided.\n");
             break;
         case ERR_FILE_NOT_FOUND:
-            fprintf(fp, "File not found or file was empty.\n");
+            fprintf(fp, "ERROR: File not found or file was empty.\n");
             break;
         case ERR_FILE_EMPTY:
-            fprintf(fp, "File not found or file was empty.\n");
+            fprintf(fp, "ERROR: File not found or file was empty.\n");
             break;
         case ERR_READING_FILE:
-            fprintf(fp, "Could not finish reading file.\n");
+            fprintf(fp, "ERROR: Could not finish reading file.\n");
             break;
-        case ERR_NO_OBJECTS:
-            fprintf(fp, "Program was unable to find Objects header in the file. Make sure this is a prison architect save file. If the problem persists, there may have been a change to the save file format and this program is out of data.\n");
+        case ERR_NO_OBJECTS_HEADING:
+            fprintf(fp, "ERROR: Program was unable to find Objects header in the file. Make sure this is a prison architect save file. If the problem persists, there may have been a change to the save file format and this program is out of data.\n");
+            break;
+        case ERR_NO_TRACKERS_HEADING:
+            fprintf(fp, "ERROR: Program was unable to find Trackers header in the file. Make sure this is a prison architect save file. If the problem persists, there may have been a change to the save file format and this program is out of data.\n");
+            break;
+        case ERR_NO_ID:
+            fprintf(fp, "ERROR: Unable to find prisoner ID.i or Id.u values. Save file format may have changed.\n");
+            break;
+        case ERR_OUT_OF_PRISONERS:
+            fprintf(fp, "No more prisoners to read in.\n");
             break;
         default:
-            fprintf(fp, "Error occurred\n");
+            fprintf(fp, "Error occurred: %d\n", errNum);
             break;
     }
 }
@@ -259,15 +316,28 @@ void editFile(char *buffer, size_t bufferSize, char *path) {
 }
 */
 
-bool isAlphaNumeric(char c) {
-    return ((c >= 48 && c <= 57) ||
-            (c >= 65 && c <= 90) ||
-            (c >= 97 && c <= 122));
+// Loads prisoner IDs into ID arrays and returns number of prisoners found
+int getPrisonerIDs(char *buffer, char *bufferEnd, long *arr_IDi, long *arr_IDu, int *err) {
+    // The part of the save file where objects and people are stored
+    char *objectsAddr = strstr(buffer, STR_OBJECTS_HEADER);
+    if (!objectsAddr) {
+        *err = ERR_NO_OBJECTS_HEADING;
+        return 0;
+    }
+
+    char *prisonerAddr = buffer;
+    for (int i = 0;; i++) {
+        prisonerAddr = getNextPrisoner(
+                prisonerAddr, bufferEnd, i, arr_IDi, arr_IDu, err) + 1;
+        if (*err) {
+            return i;
+        }
+    }
 }
 
 // Returns the addr of the next grouping of characters for parsing
 // Marks the first non-whitespace, then counts characters until next whitespace
-char *getNextToken(char *buffer, int direction, int *tokenLength) {
+char *getNextToken(char *buffer, char *bufferEnd, int direction, int *tokenLength) {
     char *tokenStart;
     char *walker = buffer;
     bool reachedTokenStart = false;
@@ -282,6 +352,9 @@ char *getNextToken(char *buffer, int direction, int *tokenLength) {
     // If searching in reverse, start 1 before
     int i = (direction == -1) ? -1 : 0;
     for(i; !reachedTokenStart; i += direction) {
+        if (&walker[i] == bufferEnd)
+            return NULL;
+
         if (walker[i] > 32 && walker[i] < 127) {
             tokenStart = &walker[i];
             reachedTokenStart = true;
@@ -289,9 +362,12 @@ char *getNextToken(char *buffer, int direction, int *tokenLength) {
         }
     }
 
-    // Find length of token
-    for (i = 0; (walker[i] > 32 && walker[i] < 127); i += direction);
-    printf("\n");
+    // Find length from start until next empty space
+    for (i = 0; (walker[i] > 32 && walker[i] < 127); i += direction) {
+        if (&walker[i] == bufferEnd)
+            break;
+    }
+
     *tokenLength = abs(i);
 
     // Move the start to the actual start of the word when direction is -1
@@ -299,101 +375,79 @@ char *getNextToken(char *buffer, int direction, int *tokenLength) {
         tokenStart -= ((*tokenLength) - 1);
     }
 
-    printf("Length of word: %d\n", *tokenLength);
+    //printf("Length of word: %d\n", *tokenLength);
 
     return tokenStart;
 }
 
-int getNextPrisoner(char *buffer, long **arr_IDi, long **arr_IDu) {
-    int index = 0;
-    //long IDs[1000][2] = {0}; // Max 1000 prisoners
+char *getNextPrisoner(char *buffer, char *bufferEnd, int prisonerIndex, long *arr_IDi, long *arr_IDu, int *err) {
+    // Find line where Type : Prisoner
+    int tokenLength = 0;
+    char *token = buffer;
 
-    // The part of the save file where objects and people are stored
-    char *objects_addr = strstr(buffer, STR_OBJECTS_HEADER);
-    if (!objects_addr) {
-        return ERR_NO_OBJECTS;
-    }
-
-    for (int i = 0; i < 200; i++)
-        printf("%c", objects_addr[i]);
-    printf("\n\n");
-
-    /*char *currentPrisoner = NULL;
+    char *prisonerAddr = NULL;
     bool foundPrisoner = false;
     while (!foundPrisoner) {
-        // Look for type prisoner on this line
-        strstr(objects_addr, "Type");
-        for (int i = 0; objects_addr[i] != '\n'; i++) {
-            if (strncmp("Prisoner", objects_addr + i, sizeof("Prisoner") - 1)) {
-                foundPrisoner = true;
-                break;
+        // Start searching for keyword "Type"
+        while (strncmp(token, "Type", tokenLength) != 0) {
+            token = getNextToken(
+                    token + tokenLength, bufferEnd, 1, &tokenLength);
+
+            if (token == NULL) {
+                *err = ERR_OUT_OF_PRISONERS;
+                return NULL;
             }
         }
-    }*/
 
-    int tokenLength = 0;
-    //char *tokenStart = getNextToken(objects_addr, 1, &tokenLength);
-    char *tokenStart = objects_addr;
-    for (int i = 0; i < 10; i++) {
-        tokenStart = getNextToken(tokenStart, -1, &tokenLength);
-        for (int j = 0; j < tokenLength; j++)
-            printf("%c", tokenStart[j]);
-        printf("\n");
-        //sleep(1);
+        // Stop if object is of type prisoner
+        token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+
+        if (token == NULL) {
+            *err = ERR_OUT_OF_PRISONERS;
+            return NULL;
+        } else if (strncmp(token, "Prisoner", tokenLength) == 0) {
+            prisonerAddr = token;
+            foundPrisoner = true;
+        }
     }
 
-    return 0;
+    char *endptr;
 
-    // Find first prisoner in file
-    //char *currentPrisoner = strstr(objects_addr, "Type                 Prisoner  ");
-    //char *nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
-
-    /*
-    while (currentPrisoner != NULL)
-    {
-        // Go back 2 lines to get Id.i and Id.u
-        char *i; int lines = 0;
-        for (i=(currentPrisoner-1); lines < 3; i--)
-        {
-            if (*i == '\n')
-                lines++;
-        }
-
-        // For strtol
-        char *endptr;
-
-        // Move forward until the Id.i number is found
-        for (i; !isdigit(*i); i++);
-        // Convert Id.i string to long and add to array
-        IDs[index][0] = strtol(i, &endptr, 10);
-
-        // Move to end of number
-        i = endptr;
-
-        // Move forward to next line until Id.u is found
-        for (i; !isdigit(*i); i++);
-        // Convert Id.i string to long and add to array
-        IDs[index][1] = strtol(i, &endptr, 10);
-
-        // Print IDs of prisoner
-        //printf("Id.i: %d\nId.u: %d\n\n", IDs[index][0], IDs[index][1]);
-
-        // Make the next prisoner current
-        currentPrisoner = nextPrisoner;
-        // If this is not the last prisoner, look for the next one
-        if (currentPrisoner != NULL)
-        {
-            nextPrisoner = strstr(currentPrisoner+1, "Type                 Prisoner  ");
-        }
-
-        // Increment index for next prisoner
-        index++;
+    // Get Id.i
+    while (strncmp(token, "Id.i", tokenLength) != 0) {
+        token = getNextToken(token, bufferEnd, -1, &tokenLength);
     }
-*/
+    token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+    long IDi = strtol(token, &endptr, 10);
+    if (endptr == token) {
+        *err = ERR_NO_ID;
+        return NULL;
+    }
 
+    // Get Id.u
+    while (strncmp(token, "Id.u", tokenLength) != 0) {
+        token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+    }
+    token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+    long IDu = strtol(token, &endptr, 10);
+    if (endptr == token) {
+        *err = ERR_NO_ID;
+        return NULL;
+    }
+
+    arr_IDi[prisonerIndex] = IDi;
+    arr_IDu[prisonerIndex] = IDu;
+
+    return prisonerAddr;
 }
 
-void removeTrackers() {
+void removeTrackers(char *buffer, char *bufferEnd, int *err) {
+    // The part of the save file where objects and people are stored
+    char *trackersAddr = strstr(buffer, STR_TRACKERS_HEADER);
+    if (!trackersAddr) {
+        *err = ERR_NO_TRACKERS_HEADING;
+        return;
+    }
 }
 
 void addTracker() {
