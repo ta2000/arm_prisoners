@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h> // calloc
 #include <stdbool.h>
+#include <assert.h>
 #include <unistd.h>
 #include <string.h> // strstr
 #include <ctype.h> // isdigit
@@ -8,8 +9,9 @@
 
 #define STR_OBJECTS_HEADER "BEGIN Objects"
 #define STR_TRACKERS_HEADER "BEGIN Trackers"
+#define STR_HISTORICAL_TRACKERS_HEADER "BEGIN HistoricalTrackers"
 
-#define VERSION 1.0
+#define VERSION "1.0"
 
 #define ERR_NONE 0
 #define ERR_NO_FILE_PATH 1
@@ -21,6 +23,21 @@
 #define ERR_OUT_OF_PRISONERS 7
 #define ERR_NO_ID 8
 #define ERR_OTHER 99
+
+const char* validItems[] = {
+    "AssaultRifle",
+    "Rifle"
+};
+
+typedef struct
+{
+    char *forname;
+    int fornameLength;
+    char *surname;
+    int surnameLength;
+    long IDi;
+    long IDu;
+} Prisoner;
 
 size_t getFileSize(char* path);
 //void editFile(char* buffer, size_t bufferSize, char* path);
@@ -47,7 +64,11 @@ char *getNextPrisoner(
     long *arr_IDu,
     int *err
 );
-void removeTrackers(char *buffer, char *bufferEnd, int *err);
+char *findTrackersHeadingEnd(
+    char *buffer,
+    char *bufferEnd,
+    int *err
+);
 
 char* logFileName = "log.txt";
 
@@ -87,13 +108,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-
     int err = 0;
+
+    fprintf(log_fp, "arm_prisoners %s\n", VERSION);
 
     // IDs
     long *arr_IDi = malloc(600 * sizeof(long));
     long *arr_IDu = malloc(600 * sizeof(long));
     fprintf(log_fp, "Acquiring prisoner IDs...\n");
+
     int numPrisoners = getPrisonerIDs(
             buffer, bufferEnd, arr_IDi, arr_IDu, &err);
     logError(log_fp, err);
@@ -103,13 +126,24 @@ int main(int argc, char *argv[])
     }
     fprintf(log_fp, "Finished collecting %d prisoner IDs.\n", numPrisoners - 1);
 
-    /*for (int i = 0; i < numPrisoners; i++) {
-        printf("Prisoner %d: Id.i %ld, Id.u %ld\n", i, arr_IDi[i], arr_IDu[i]);
-    }*/
+    for (int i = 0; i < numPrisoners; i++) {
+        fprintf(log_fp, "Prisoner %d: \t\tId.i %ld,\tId.u %ld\n", i, arr_IDi[i], arr_IDu[i]);
+    }
 
     // Trackers
     fprintf(log_fp, "Removing existing trackers...\n");
-    removeTrackers(buffer, bufferEnd, &err);
+    err = 0;
+    char *trackers = findTrackersHeadingEnd(buffer, bufferEnd, &err);
+    logError(log_fp, err);
+
+    char *historicalTrackers = strstr(buffer, STR_HISTORICAL_TRACKERS_HEADER);
+    assert(historicalTrackers);
+
+    size_t trackersSize = historicalTrackers - trackers;
+    fprintf(log_fp, "Initial size of trackers: %zd\n", trackersSize);
+
+    if (!err)
+        fprintf(log_fp, "All prisoners armed... God Bless America!!!\n");
 
     free(buffer);
 
@@ -380,6 +414,23 @@ char *getNextToken(char *buffer, char *bufferEnd, int direction, int *tokenLengt
     return tokenStart;
 }
 
+// Finds next occurence of key and returns address of next token
+char *getKeyValue(char *key, char *buffer, char *bufferEnd, int *valueLength) {
+    int tokenLength = 0;
+    char *token = buffer;
+
+    // Find key
+    do {
+        token = getNextToken(token, bufferEnd, 1, &tokenLength);
+    } while (strncmp(token, key, tokenLength) != 0);
+
+    // Return token after key
+    token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+
+    *valueLength = tokenLength;
+    return token;
+}
+
 char *getNextPrisoner(char *buffer, char *bufferEnd, int prisonerIndex, long *arr_IDi, long *arr_IDu, int *err) {
     // Find line where Type : Prisoner
     int tokenLength = 0;
@@ -418,6 +469,7 @@ char *getNextPrisoner(char *buffer, char *bufferEnd, int prisonerIndex, long *ar
         token = getNextToken(token, bufferEnd, -1, &tokenLength);
     }
     token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+
     long IDi = strtol(token, &endptr, 10);
     if (endptr == token) {
         *err = ERR_NO_ID;
@@ -429,6 +481,7 @@ char *getNextPrisoner(char *buffer, char *bufferEnd, int prisonerIndex, long *ar
         token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
     }
     token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+
     long IDu = strtol(token, &endptr, 10);
     if (endptr == token) {
         *err = ERR_NO_ID;
@@ -441,14 +494,29 @@ char *getNextPrisoner(char *buffer, char *bufferEnd, int prisonerIndex, long *ar
     return prisonerAddr;
 }
 
-void removeTrackers(char *buffer, char *bufferEnd, int *err) {
-    // The part of the save file where objects and people are stored
-    char *trackersAddr = strstr(buffer, STR_TRACKERS_HEADER);
-    if (!trackersAddr) {
-        *err = ERR_NO_TRACKERS_HEADING;
-        return;
+char *findTrackersHeadingEnd(char *buffer, char *bufferEnd, int *err) {
+    char *token = buffer;
+    int tokenLength = 0;
+    token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
+    while (strncmp(token, "Trackers", tokenLength) != 0) {
+        token = getNextToken(token + tokenLength, bufferEnd, 1, &tokenLength);
     }
+    if (!token) {
+        *err = ERR_NO_TRACKERS_HEADING;
+        return NULL;
+    }
+
+    return token + tokenLength;
+
+    /*char *trackersAddr = token;
+    char *trackersEnd = NULL;
+    trackersEnd = strstr(trackersAddr, "\nEND");
+    assert(trackersEnd);
+    for (int i = 0; i < 30; i++) {
+        printf("%c", trackersEnd[i]);
+    }
+    printf("\n");*/
 }
 
-void addTracker() {
+void addTracker(char *item, long IDi, long IDu) {
 }
